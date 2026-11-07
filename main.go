@@ -137,6 +137,13 @@ func main() {
 	log.Info().Msg("Stopped")
 }
 
+const (
+	// A release or commit can 404 when the RSS feed is ahead of GitHub (e.g. a
+	// release that is still a draft). Keep retrying for a while before giving up.
+	notFoundRetryInterval = 5 * time.Minute
+	notFoundRetryFor      = 24 * time.Hour
+)
+
 func handleMessage(ctx context.Context, client *mautrix.Client, gh *GitHub, evt *event.Event, msg *event.MessageEventContent) {
 	links := findLinks(msg.Body, msg.FormattedBody)
 	if len(links) == 0 {
@@ -150,34 +157,55 @@ func handleMessage(ctx context.Context, client *mautrix.Client, gh *GitHub, evt 
 	}
 
 	for _, l := range links {
-		fetchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		var content *event.MessageEventContent
-		var err error
-		switch l.Kind {
-		case "release":
-			var r *Release
-			if r, err = gh.Release(fetchCtx, l.Owner, l.Repo, l.Ref); err == nil {
-				content = renderRelease(l, r)
-			}
-		case "commit":
-			var c *Commit
-			if c, err = gh.Commit(fetchCtx, l.Owner, l.Repo, l.Ref); err == nil {
-				content = renderCommit(l, c, branch)
-			}
-		}
-		cancel()
-		if err != nil {
+		content, err := gh.Fetch(ctx, l, branch)
+		if isNotFound(err) {
+			log.Warn().Str("url", l.URL).Dur("interval", notFoundRetryInterval).Msg("Not found on GitHub yet, will retry")
+			go retryNotFound(ctx, client, gh, evt.RoomID, l, branch, log)
+			continue
+		} else if err != nil {
 			log.Error().Err(err).Str("url", l.URL).Msg("Failed to fetch from GitHub")
 			continue
 		}
-		// Post as a standalone message (not a reply) that pings nobody.
-		content.Mentions = &event.Mentions{}
-		if _, err := client.SendMessageEvent(ctx, evt.RoomID, event.EventMessage, content); err != nil {
-			log.Error().Err(err).Str("url", l.URL).Msg("Failed to send message")
-			continue
-		}
-		log.Info().Str("url", l.URL).Msg("Posted GitHub info")
+		postContent(ctx, client, evt.RoomID, l, content, log)
 	}
+}
+
+func retryNotFound(ctx context.Context, client *mautrix.Client, gh *GitHub, roomID id.RoomID, l Link, branch string, log zerolog.Logger) {
+	deadline := time.Now().Add(notFoundRetryFor)
+	ticker := time.NewTicker(notFoundRetryInterval)
+	defer ticker.Stop()
+	for attempt := 2; ; attempt++ {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		content, err := gh.Fetch(ctx, l, branch)
+		if err == nil {
+			postContent(ctx, client, roomID, l, content, log)
+			return
+		}
+		if time.Now().After(deadline) {
+			log.Error().Err(err).Str("url", l.URL).Int("attempt", attempt).Msg("Still failing to fetch from GitHub, giving up")
+			return
+		}
+		if isNotFound(err) {
+			log.Info().Str("url", l.URL).Int("attempt", attempt).Msg("Still not found on GitHub, will retry")
+		} else {
+			// Transient errors (rate limit, network, 5xx) don't end the retry loop.
+			log.Error().Err(err).Str("url", l.URL).Int("attempt", attempt).Msg("Failed to fetch from GitHub, will retry")
+		}
+	}
+}
+
+func postContent(ctx context.Context, client *mautrix.Client, roomID id.RoomID, l Link, content *event.MessageEventContent, log zerolog.Logger) {
+	// Post as a standalone message (not a reply) that pings nobody.
+	content.Mentions = &event.Mentions{}
+	if _, err := client.SendMessageEvent(ctx, roomID, event.EventMessage, content); err != nil {
+		log.Error().Err(err).Str("url", l.URL).Msg("Failed to send message")
+		return
+	}
+	log.Info().Str("url", l.URL).Msg("Posted GitHub info")
 }
 
 func printPreview(u, token string) {
@@ -192,19 +220,7 @@ func printPreview(u, token string) {
 		branch = m[1]
 	}
 	for _, l := range links {
-		var content *event.MessageEventContent
-		var err error
-		if l.Kind == "release" {
-			var r *Release
-			if r, err = gh.Release(context.Background(), l.Owner, l.Repo, l.Ref); err == nil {
-				content = renderRelease(l, r)
-			}
-		} else {
-			var c *Commit
-			if c, err = gh.Commit(context.Background(), l.Owner, l.Repo, l.Ref); err == nil {
-				content = renderCommit(l, c, branch)
-			}
-		}
+		content, err := gh.Fetch(context.Background(), l, branch)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)

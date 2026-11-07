@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"maunium.net/go/mautrix/event"
 )
 
 // Link is a GitHub commit or release link found in a message.
@@ -123,6 +126,23 @@ type Commit struct {
 	} `json:"files"`
 }
 
+// HTTPError is returned for non-200 GitHub API responses.
+type HTTPError struct {
+	Path       string
+	Status     string
+	StatusCode int
+	Body       string
+}
+
+func (e *HTTPError) Error() string {
+	return fmt.Sprintf("GET %s: %s: %s", e.Path, e.Status, e.Body)
+}
+
+func isNotFound(err error) bool {
+	var he *HTTPError
+	return errors.As(err, &he) && he.StatusCode == http.StatusNotFound
+}
+
 func (g *GitHub) get(ctx context.Context, path string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com"+path, nil)
 	if err != nil {
@@ -141,7 +161,7 @@ func (g *GitHub) get(ctx context.Context, path string, out any) error {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("GET %s: %s: %s", path, resp.Status, strings.TrimSpace(string(body)))
+		return &HTTPError{Path: path, Status: resp.Status, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(body))}
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }
@@ -156,4 +176,25 @@ func (g *GitHub) Commit(ctx context.Context, owner, repo, sha string) (*Commit, 
 	var c Commit
 	err := g.get(ctx, fmt.Sprintf("/repos/%s/%s/commits/%s", owner, repo, sha), &c)
 	return &c, err
+}
+
+// Fetch retrieves the commit or release a link points to and renders it.
+func (g *GitHub) Fetch(ctx context.Context, l Link, branch string) (*event.MessageEventContent, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	switch l.Kind {
+	case "release":
+		r, err := g.Release(ctx, l.Owner, l.Repo, l.Ref)
+		if err != nil {
+			return nil, err
+		}
+		return renderRelease(l, r), nil
+	case "commit":
+		c, err := g.Commit(ctx, l.Owner, l.Repo, l.Ref)
+		if err != nil {
+			return nil, err
+		}
+		return renderCommit(l, c, branch), nil
+	}
+	return nil, fmt.Errorf("unknown link kind %q", l.Kind)
 }
