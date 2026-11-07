@@ -31,3 +31,11 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Secrets / local config
+.token
+config.yaml
+
+# Build output
+/github-link-matrix-bot
+/data/

@@ -1,0 +1,20 @@
+# Copy to config.yaml (which is git-ignored) and fill in.
+# With docker-compose, put config.yaml and .token in ./data (mounted at /data).
+
+# Matrix homeserver base URL.
+homeserver: https://aguiarvieira.pt
+
+# Access token for the bot account. Either put it inline...
+access_token: ""
+# ...or point at a file containing it (used when access_token is empty).
+# Relative paths are resolved against the directory containing this config file.
+access_token_file: .token
+
+# Rooms to monitor. The bot tries to join each of them on startup.
+# Room IDs (!abc:server) or aliases (#room:server) are accepted.
+rooms:
+  - "!nmZrvcKkeQiFGRlJtE:aguiarvieira.pt"
+
+# Optional GitHub token (falls back to $GITHUB_TOKEN). Without one, the GitHub
+# API allows 60 requests/hour.
+github_token: ""

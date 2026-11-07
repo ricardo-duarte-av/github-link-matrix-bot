@@ -1,0 +1,20 @@
+# Example deployment.
+#   mkdir data
+#   cp config.yaml.example data/config.yaml   # edit it
+#   echo 'syt_...' > data/.token              # bot access token
+#   docker compose up -d
+services:
+  github-link-matrix-bot:
+    image: ghcr.io/ricardo-duarte-av/github-link-matrix-bot:latest
+    # Or build locally instead of pulling:
+    # build: .
+    container_name: github-link-matrix-bot
+    restart: unless-stopped
+    volumes:
+      - ./data:/data:ro
+    # The image runs as uid/gid 65532. config.yaml and .token must be readable
+    # by that user, or set this to the owner of ./data (see `id -u` / `id -g`).
+    # user: "1000:1000"
+    # Optional: pass a GitHub token instead of putting it in config.yaml.
+    # environment:
+    #   GITHUB_TOKEN: ghp_...
