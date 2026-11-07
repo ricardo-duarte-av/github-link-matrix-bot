@@ -170,8 +170,7 @@ func handleMessage(ctx context.Context, client *mautrix.Client, gh *GitHub, evt 
 			log.Error().Err(err).Str("url", l.URL).Msg("Failed to fetch from GitHub")
 			continue
 		}
-		content.SetReply(evt)
-		// Don't ping the original sender.
+		// Post as a standalone message (not a reply) that pings nobody.
 		content.Mentions = &event.Mentions{}
 		if _, err := client.SendMessageEvent(ctx, evt.RoomID, event.EventMessage, content); err != nil {
 			log.Error().Err(err).Str("url", l.URL).Msg("Failed to send message")

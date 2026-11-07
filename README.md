@@ -9,8 +9,9 @@ commits or releases, fetches the details from the GitHub API, and replies with t
   "Recent Commits to repo:branch:" messages), files changed with +/- stats.
 
 Only new messages are handled; history present at startup is ignored.
-Both `m.text` and `m.notice` messages are processed, and replies are sent as
-`m.notice` so other bots won't loop on them. E2EE rooms aren't supported.
+Both `m.text` and `m.notice` messages are processed, and the info is posted as a
+standalone `m.notice` (not a reply) so other bots won't loop on it. E2EE rooms
+aren't supported.
 
 ## Setup
 
