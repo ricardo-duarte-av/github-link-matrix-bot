@@ -140,8 +140,9 @@ func main() {
 const (
 	// A release or commit can 404 when the RSS feed is ahead of GitHub (e.g. a
 	// release that is still a draft). Keep retrying for a while before giving up.
+	// Rate-limited fetches are retried within the same window, once the limit resets.
 	notFoundRetryInterval = 5 * time.Minute
-	notFoundRetryFor      = 24 * time.Hour
+	retryFor              = 24 * time.Hour
 )
 
 func handleMessage(ctx context.Context, client *mautrix.Client, gh *GitHub, evt *event.Event, msg *event.MessageEventContent) {
@@ -158,9 +159,9 @@ func handleMessage(ctx context.Context, client *mautrix.Client, gh *GitHub, evt 
 
 	for _, l := range links {
 		content, err := gh.Fetch(ctx, l, branch)
-		if isNotFound(err) {
-			log.Warn().Str("url", l.URL).Dur("interval", notFoundRetryInterval).Msg("Not found on GitHub yet, will retry")
-			go retryNotFound(ctx, client, gh, evt.RoomID, l, branch, log)
+		if wait, ok := retryDelay(err); ok {
+			logRetry(log, err, l, 1, wait)
+			go retryLater(ctx, client, gh, evt.RoomID, l, branch, wait, log)
 			continue
 		} else if err != nil {
 			log.Error().Err(err).Str("url", l.URL).Msg("Failed to fetch from GitHub")
@@ -170,15 +171,38 @@ func handleMessage(ctx context.Context, client *mautrix.Client, gh *GitHub, evt 
 	}
 }
 
-func retryNotFound(ctx context.Context, client *mautrix.Client, gh *GitHub, roomID id.RoomID, l Link, branch string, log zerolog.Logger) {
-	deadline := time.Now().Add(notFoundRetryFor)
-	ticker := time.NewTicker(notFoundRetryInterval)
-	defer ticker.Stop()
+// retryDelay reports whether a failed fetch should be retried and after how long:
+// once the rate limit resets, or after notFoundRetryInterval for a 404.
+func retryDelay(err error) (time.Duration, bool) {
+	if wait, ok := rateLimitWait(err); ok {
+		return wait, true
+	}
+	if isNotFound(err) {
+		return notFoundRetryInterval, true
+	}
+	return 0, false
+}
+
+func logRetry(log zerolog.Logger, err error, l Link, attempt int, wait time.Duration) {
+	ev := log.Warn().Str("url", l.URL).Int("attempt", attempt).Dur("retry_in", wait)
+	if isNotFound(err) {
+		ev.Msg("Not found on GitHub yet, will retry")
+	} else if _, ok := rateLimitWait(err); ok {
+		ev.Msg("GitHub rate limit exceeded, will retry after it resets")
+	} else {
+		ev.Err(err).Msg("Failed to fetch from GitHub, will retry")
+	}
+}
+
+func retryLater(ctx context.Context, client *mautrix.Client, gh *GitHub, roomID id.RoomID, l Link, branch string, wait time.Duration, log zerolog.Logger) {
+	deadline := time.Now().Add(retryFor)
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
 	for attempt := 2; ; attempt++ {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-timer.C:
 		}
 		content, err := gh.Fetch(ctx, l, branch)
 		if err == nil {
@@ -189,12 +213,13 @@ func retryNotFound(ctx context.Context, client *mautrix.Client, gh *GitHub, room
 			log.Error().Err(err).Str("url", l.URL).Int("attempt", attempt).Msg("Still failing to fetch from GitHub, giving up")
 			return
 		}
-		if isNotFound(err) {
-			log.Info().Str("url", l.URL).Int("attempt", attempt).Msg("Still not found on GitHub, will retry")
-		} else {
-			// Transient errors (rate limit, network, 5xx) don't end the retry loop.
-			log.Error().Err(err).Str("url", l.URL).Int("attempt", attempt).Msg("Failed to fetch from GitHub, will retry")
+		// Other transient errors (network, 5xx) don't end the retry loop either.
+		next, ok := retryDelay(err)
+		if !ok {
+			next = notFoundRetryInterval
 		}
+		logRetry(log, err, l, attempt, next)
+		timer.Reset(next)
 	}
 }
 

@@ -29,7 +29,8 @@ Flags:
   (uses `$GITHUB_TOKEN` if set)
 
 Set `github_token` in the config (or `$GITHUB_TOKEN`) to avoid GitHub's 60 requests/hour
-unauthenticated rate limit.
+unauthenticated rate limit. If a request is rate limited anyway, the link is retried
+once the limit resets (within the same 24h window used for links that 404).
 
 ## Docker
 

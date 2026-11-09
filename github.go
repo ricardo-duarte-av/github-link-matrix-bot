@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -132,6 +133,9 @@ type HTTPError struct {
 	Status     string
 	StatusCode int
 	Body       string
+	// RetryAfter is set when the request was rate limited: how long to wait
+	// before trying again.
+	RetryAfter time.Duration
 }
 
 func (e *HTTPError) Error() string {
@@ -141,6 +145,47 @@ func (e *HTTPError) Error() string {
 func isNotFound(err error) bool {
 	var he *HTTPError
 	return errors.As(err, &he) && he.StatusCode == http.StatusNotFound
+}
+
+// rateLimitWait reports how long to wait if err is a GitHub rate-limit error.
+func rateLimitWait(err error) (time.Duration, bool) {
+	var he *HTTPError
+	if errors.As(err, &he) && he.RetryAfter > 0 {
+		return he.RetryAfter, true
+	}
+	return 0, false
+}
+
+const (
+	// Used for secondary rate limits that don't say when to retry; GitHub's
+	// docs ask to wait at least a minute.
+	defaultRateLimitWait = time.Minute
+	maxRateLimitWait     = time.Hour
+)
+
+// parseRateLimit returns how long to wait for a rate-limited response, or 0 if
+// the response isn't a rate-limit error. See
+// https://docs.github.com/rest/using-the-rest-api/rate-limits-for-the-rest-api
+func parseRateLimit(resp *http.Response, body string, now time.Time) time.Duration {
+	if resp.StatusCode != http.StatusForbidden && resp.StatusCode != http.StatusTooManyRequests {
+		return 0
+	}
+	var wait time.Duration
+	if s := resp.Header.Get("Retry-After"); s != "" {
+		if secs, err := strconv.Atoi(s); err == nil {
+			wait = time.Duration(secs) * time.Second
+		}
+	} else if resp.Header.Get("X-RateLimit-Remaining") == "0" {
+		if reset, err := strconv.ParseInt(resp.Header.Get("X-RateLimit-Reset"), 10, 64); err == nil {
+			// Small buffer for clock skew between us and GitHub.
+			wait = time.Unix(reset, 0).Sub(now) + 2*time.Second
+		}
+	} else if resp.StatusCode == http.StatusTooManyRequests || strings.Contains(strings.ToLower(body), "rate limit") {
+		wait = defaultRateLimitWait
+	} else {
+		return 0 // a plain 403 (permissions etc.)
+	}
+	return min(max(wait, time.Second), maxRateLimitWait)
 }
 
 func (g *GitHub) get(ctx context.Context, path string, out any) error {
@@ -160,8 +205,15 @@ func (g *GitHub) get(ctx context.Context, path string, out any) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return &HTTPError{Path: path, Status: resp.Status, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(body))}
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		body := strings.TrimSpace(string(raw))
+		return &HTTPError{
+			Path:       path,
+			Status:     resp.Status,
+			StatusCode: resp.StatusCode,
+			Body:       body,
+			RetryAfter: parseRateLimit(resp, body, time.Now()),
+		}
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }
