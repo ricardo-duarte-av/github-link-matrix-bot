@@ -12,9 +12,15 @@ services:
     restart: unless-stopped
     volumes:
       - ./data:/data:ro
+      # Writable state (daily summary log). The named volume is created owned by
+      # uid 65532; if you change `user:` below, use a bind mount you own instead.
+      - state:/state
     # The image runs as uid/gid 65532. config.yaml and .token must be readable
     # by that user, or set this to the owner of ./data (see `id -u` / `id -g`).
     # user: "1000:1000"
     # Optional: pass a GitHub token instead of putting it in config.yaml.
     # environment:
     #   GITHUB_TOKEN: ghp_...
+
+volumes:
+  state:

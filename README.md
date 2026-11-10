@@ -8,6 +8,13 @@ commits or releases, fetches the details from the GitHub API, and replies with t
 - Commits: full message, author, date, parents, branch (taken from RSS-bot
   "Recent Commits to repo:branch:" messages), files changed with +/- stats.
 
+- Daily summary (optional): once a day, each room gets a digest of the commits
+  and releases posted there, grouped by repo, with links. See `summary:` in
+  `config.yaml.example`. The log is persisted to `state_file`, so restarts
+  don't lose it; a missed summary (bot down at that time) is folded into the
+  next one. Digests over ~48 KB are split into several messages (Matrix
+  events are capped at 64 KiB).
+
 Only new messages are handled; history present at startup is ignored.
 Both `m.text` and `m.notice` messages are processed, and the info is posted as a
 standalone `m.notice` (not a reply) so other bots won't loop on it. E2EE rooms
@@ -45,5 +52,6 @@ cp .token data/.token
 docker compose up -d
 ```
 
-`./data` is mounted read-only at `/data`. The container runs as uid 65532, so
+`./data` is mounted read-only at `/data`; the daily summary log goes in the
+writable `state` named volume at `/state`. The container runs as uid 65532, so
 the files must be readable by it (or set `user:` in `docker-compose.yaml`).

@@ -18,3 +18,19 @@ rooms:
 # Optional GitHub token (falls back to $GITHUB_TOKEN). Without one, the GitHub
 # API allows 60 requests/hour.
 github_token: ""
+
+# Optional daily summary: each room gets one digest per day listing the commits
+# and releases the bot posted about, grouped by repo. Long digests are split
+# into several messages to stay under Matrix's 64 KiB event size limit.
+summary:
+  enabled: false
+  # Local time to post it (HH:MM) and its IANA timezone.
+  time: "23:59"
+  timezone: UTC
+  # Where the day's log is kept so it survives restarts (must be writable).
+  # /state is the writable volume in docker-compose; for a local run use e.g.
+  # summary.json (relative paths are resolved against this file's directory).
+  # Leave empty to keep it in memory only.
+  state_file: /state/summary.json
+  # Commits listed per repo before "… and N more" (-1 for no limit).
+  max_commits_per_repo: 50

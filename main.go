@@ -88,6 +88,15 @@ func main() {
 	gh := &GitHub{Token: cfg.GitHubToken, Client: &http.Client{Timeout: 20 * time.Second}}
 	startTime := time.Now()
 
+	var sum *Summary
+	if cfg.Summary.Enabled {
+		sum, err = NewSummary(cfg.Summary, log)
+		if err != nil {
+			log.Fatal().Err(err).Msg("Failed to set up daily summary")
+		}
+		go sum.Run(ctx, client)
+	}
+
 	syncer := client.Syncer.(*mautrix.DefaultSyncer)
 	syncer.FilterJSON = &mautrix.Filter{
 		Room: &mautrix.RoomFilter{
@@ -114,7 +123,7 @@ func main() {
 		if content.RelatesTo.GetReplaceID() != "" {
 			return // ignore edits
 		}
-		handleMessage(ctx, client, gh, evt, content)
+		handleMessage(ctx, client, gh, sum, evt, content)
 	})
 
 	go func() {
@@ -145,7 +154,7 @@ const (
 	retryFor              = 24 * time.Hour
 )
 
-func handleMessage(ctx context.Context, client *mautrix.Client, gh *GitHub, evt *event.Event, msg *event.MessageEventContent) {
+func handleMessage(ctx context.Context, client *mautrix.Client, gh *GitHub, sum *Summary, evt *event.Event, msg *event.MessageEventContent) {
 	links := findLinks(msg.Body, msg.FormattedBody)
 	if len(links) == 0 {
 		return
@@ -158,16 +167,17 @@ func handleMessage(ctx context.Context, client *mautrix.Client, gh *GitHub, evt 
 	}
 
 	for _, l := range links {
-		content, err := gh.Fetch(ctx, l, branch)
+		content, entry, err := gh.Fetch(ctx, l, branch)
 		if wait, ok := retryDelay(err); ok {
 			logRetry(log, err, l, 1, wait)
-			go retryLater(ctx, client, gh, evt.RoomID, l, branch, wait, log)
+			go retryLater(ctx, client, gh, sum, evt.RoomID, l, branch, wait, log)
 			continue
 		} else if err != nil {
 			log.Error().Err(err).Str("url", l.URL).Msg("Failed to fetch from GitHub")
 			continue
 		}
 		postContent(ctx, client, evt.RoomID, l, content, log)
+		sum.Add(evt.RoomID, *entry)
 	}
 }
 
@@ -194,7 +204,7 @@ func logRetry(log zerolog.Logger, err error, l Link, attempt int, wait time.Dura
 	}
 }
 
-func retryLater(ctx context.Context, client *mautrix.Client, gh *GitHub, roomID id.RoomID, l Link, branch string, wait time.Duration, log zerolog.Logger) {
+func retryLater(ctx context.Context, client *mautrix.Client, gh *GitHub, sum *Summary, roomID id.RoomID, l Link, branch string, wait time.Duration, log zerolog.Logger) {
 	deadline := time.Now().Add(retryFor)
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
@@ -204,9 +214,10 @@ func retryLater(ctx context.Context, client *mautrix.Client, gh *GitHub, roomID 
 			return
 		case <-timer.C:
 		}
-		content, err := gh.Fetch(ctx, l, branch)
+		content, entry, err := gh.Fetch(ctx, l, branch)
 		if err == nil {
 			postContent(ctx, client, roomID, l, content, log)
+			sum.Add(roomID, *entry)
 			return
 		}
 		if time.Now().After(deadline) {
@@ -245,7 +256,7 @@ func printPreview(u, token string) {
 		branch = m[1]
 	}
 	for _, l := range links {
-		content, err := gh.Fetch(context.Background(), l, branch)
+		content, _, err := gh.Fetch(context.Background(), l, branch)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)

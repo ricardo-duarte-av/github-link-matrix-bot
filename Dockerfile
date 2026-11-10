@@ -8,10 +8,10 @@ COPY *.go ./
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/github-link-matrix-bot .
 
 FROM alpine:3.22
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata && mkdir /state && chown 65532:65532 /state
 COPY --from=build /out/github-link-matrix-bot /usr/local/bin/github-link-matrix-bot
 USER 65532:65532
-VOLUME /data
+VOLUME /data /state
 WORKDIR /data
 ENTRYPOINT ["/usr/local/bin/github-link-matrix-bot"]
 CMD ["-config", "/data/config.yaml"]

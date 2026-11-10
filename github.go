@@ -230,23 +230,37 @@ func (g *GitHub) Commit(ctx context.Context, owner, repo, sha string) (*Commit, 
 	return &c, err
 }
 
-// Fetch retrieves the commit or release a link points to and renders it.
-func (g *GitHub) Fetch(ctx context.Context, l Link, branch string) (*event.MessageEventContent, error) {
+// Fetch retrieves the commit or release a link points to and renders it. It
+// also returns a short Entry for the daily summary.
+func (g *GitHub) Fetch(ctx context.Context, l Link, branch string) (*event.MessageEventContent, *Entry, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	e := &Entry{Kind: l.Kind, Repo: l.Owner + "/" + l.Repo, Ref: l.Ref, URL: l.URL, Branch: branch}
 	switch l.Kind {
 	case "release":
 		r, err := g.Release(ctx, l.Owner, l.Repo, l.Ref)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return renderRelease(l, r), nil
+		e.Title, e.Ref, e.Prerelease = r.Name, r.TagName, r.Prerelease
+		if e.Title == "" {
+			e.Title = r.TagName
+		}
+		e.Author, e.AuthorURL = r.Author.Login, r.Author.HTMLURL
+		return renderRelease(l, r), e, nil
 	case "commit":
 		c, err := g.Commit(ctx, l.Owner, l.Repo, l.Ref)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return renderCommit(l, c, branch), nil
+		e.Ref = c.SHA
+		e.Title, _, _ = strings.Cut(strings.TrimSpace(strings.ReplaceAll(c.Commit.Message, "\r\n", "\n")), "\n")
+		if c.Author != nil && c.Author.Login != "" {
+			e.Author, e.AuthorURL = c.Author.Login, c.Author.HTMLURL
+		} else {
+			e.Author = c.Commit.Author.Name
+		}
+		return renderCommit(l, c, branch), e, nil
 	}
-	return nil, fmt.Errorf("unknown link kind %q", l.Kind)
+	return nil, nil, fmt.Errorf("unknown link kind %q", l.Kind)
 }
