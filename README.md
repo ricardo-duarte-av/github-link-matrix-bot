@@ -1,7 +1,13 @@
 # github-link-matrix-bot
 
-A Matrix bot (mautrix-go) that watches rooms for messages linking to GitHub
-commits or releases, fetches the details from the GitHub API, and replies with them.
+A Matrix bot (mautrix-go) that watches rooms for messages linking to commits or
+releases on GitHub, Forgejo/Gitea or GitLab, fetches the details from the forge's
+API, and posts them.
+
+github.com, gitlab.com and codeberg.org work out of the box; self-hosted
+instances (e.g. `https://git.eden-emu.dev`) are added under `forges:` in the
+config. Forgejo and GitLab don't report per-file line counts, so changed files
+there are listed with their status only.
 
 - Releases: name, tag, pre-release/draft, author, date, rendered release notes,
   assets (size + sha256 digest) and source archives.
@@ -33,11 +39,13 @@ Flags:
 - `-config path` – config file (default `config.yaml`)
 - `-debug` – verbose logging
 - `-print URL` – fetch a commit/release URL, print the message it would send, and exit
-  (uses `$GITHUB_TOKEN` if set)
+  (uses the forges from `-config` if it loads, else the built-in ones and `$GITHUB_TOKEN`)
 
 Set `github_token` in the config (or `$GITHUB_TOKEN`) to avoid GitHub's 60 requests/hour
-unauthenticated rate limit. If a request is rate limited anyway, the link is retried
-once the limit resets (within the same 24h window used for links that 404).
+unauthenticated rate limit; other forges take an optional `token` in their `forges:`
+entry. If a request is rate limited anyway (GitHub's headers, or a 429 with
+`Retry-After` from GitLab), the link is retried once the limit resets (within the same
+24h window used for links that 404).
 
 ## Docker
 

@@ -16,7 +16,15 @@ type Config struct {
 	AccessTokenFile string        `yaml:"access_token_file"`
 	Rooms           []string      `yaml:"rooms"`
 	GitHubToken     string        `yaml:"github_token"`
+	Forges          []ForgeConfig `yaml:"forges"`
 	Summary         SummaryConfig `yaml:"summary"`
+}
+
+// ForgeConfig adds a Forgejo/Gitea, GitLab or GitHub Enterprise instance.
+type ForgeConfig struct {
+	URL   string `yaml:"url"`   // e.g. https://git.example.org
+	Type  string `yaml:"type"`  // forgejo, gitea, gitlab or github
+	Token string `yaml:"token"` // optional API token
 }
 
 type SummaryConfig struct {
@@ -55,6 +63,9 @@ func loadConfig(path string) (*Config, error) {
 	}
 	if cfg.GitHubToken == "" {
 		cfg.GitHubToken = os.Getenv("GITHUB_TOKEN")
+	}
+	if _, err := NewForges(cfg.GitHubToken, cfg.Forges); err != nil {
+		return nil, err
 	}
 	if cfg.Summary.Time == "" {
 		cfg.Summary.Time = "23:59"

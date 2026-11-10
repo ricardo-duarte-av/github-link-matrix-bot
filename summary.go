@@ -27,9 +27,11 @@ const maxSummaryTitle = 200
 
 // Entry is a commit or release the bot posted info about, kept for the daily summary.
 type Entry struct {
-	Kind       string    `json:"kind"` // "commit" or "release"
-	Repo       string    `json:"repo"` // owner/repo
-	Ref        string    `json:"ref"`  // commit SHA or release tag
+	Kind       string    `json:"kind"`               // "commit" or "release"
+	Forge      string    `json:"forge,omitempty"`    // forge kind; empty means github (older state files)
+	Repo       string    `json:"repo"`               // owner/repo (group/.../project on GitLab)
+	RepoURL    string    `json:"repo_url,omitempty"` // empty means https://github.com/<repo>
+	Ref        string    `json:"ref"`                // commit SHA or release tag
 	URL        string    `json:"url"`
 	Title      string    `json:"title"` // commit subject or release name
 	Author     string    `json:"author,omitempty"`
@@ -37,6 +39,20 @@ type Entry struct {
 	Branch     string    `json:"branch,omitempty"`
 	Prerelease bool      `json:"prerelease,omitempty"`
 	LoggedAt   time.Time `json:"logged_at"`
+}
+
+// forge returns a Forge for building links to the entry's repo.
+func (e Entry) forge() (*Forge, string) {
+	repoURL := e.RepoURL
+	if repoURL == "" {
+		repoURL = "https://github.com/" + e.Repo
+	}
+	kind := e.Forge
+	if kind == "" {
+		kind = KindGitHub
+	}
+	base := strings.TrimSuffix(repoURL, "/"+e.Repo)
+	return &Forge{Kind: kind, BaseURL: base}, repoURL
 }
 
 // Summary collects entries per room and posts a digest once a day.
@@ -189,6 +205,8 @@ func (s *Summary) sendAll(ctx context.Context, client *mautrix.Client) {
 
 type repoGroup struct {
 	name     string
+	url      string
+	forge    *Forge
 	releases []Entry
 	commits  []Entry
 }
@@ -197,12 +215,13 @@ func groupByRepo(entries []Entry) []repoGroup {
 	idx := map[string]int{}
 	var groups []repoGroup
 	for _, e := range entries {
-		key := strings.ToLower(e.Repo)
+		f, repoURL := e.forge()
+		key := strings.ToLower(repoURL)
 		i, ok := idx[key]
 		if !ok {
 			i = len(groups)
 			idx[key] = i
-			groups = append(groups, repoGroup{name: e.Repo})
+			groups = append(groups, repoGroup{name: e.Repo, url: repoURL, forge: f})
 		}
 		if e.Kind == "release" {
 			groups[i].releases = append(groups[i].releases, e)
@@ -211,7 +230,11 @@ func groupByRepo(entries []Entry) []repoGroup {
 		}
 	}
 	sort.SliceStable(groups, func(a, b int) bool {
-		return strings.ToLower(groups[a].name) < strings.ToLower(groups[b].name)
+		na, nb := strings.ToLower(groups[a].name), strings.ToLower(groups[b].name)
+		if na != nb {
+			return na < nb
+		}
+		return strings.ToLower(groups[a].url) < strings.ToLower(groups[b].url)
 	})
 	return groups
 }
@@ -272,19 +295,19 @@ func repoItems(g repoGroup, maxCommits int) []summaryItem {
 	for _, e := range g.commits {
 		branches[e.Branch] = true
 	}
-	repoURL := "https://github.com/" + g.name
 	for i, e := range g.commits {
 		if maxCommits > 0 && i == maxCommits {
-			more := repoURL + "/commits"
-			if len(branches) == 1 && e.Branch != "" {
-				more += "/" + escapeTag(e.Branch)
+			branch := ""
+			if len(branches) == 1 {
+				branch = e.Branch
 			}
+			more := g.forge.CommitsURL(g.name, branch)
 			items = append(items, summaryItem{html: fmt.Sprintf("<li>… and %d more, see %s</li>\n", len(g.commits)-maxCommits, a(more, "the commit history"))})
 			break
 		}
 		short := e.Ref[:min(7, len(e.Ref))]
 		line := `<a href="` + html.EscapeString(e.URL) + `"><code>` + short + `</code></a> ` +
-			linkifyRefs(html.EscapeString(truncateRunes(e.Title, maxSummaryTitle)), owner(g.name), repo(g.name), false)
+			linkifyRefs(html.EscapeString(truncateRunes(e.Title, maxSummaryTitle)), g.forge, g.name, false)
 		if len(branches) > 1 && e.Branch != "" {
 			line += " (" + html.EscapeString(e.Branch) + ")"
 		}
@@ -300,12 +323,9 @@ func repoItems(g repoGroup, maxCommits int) []summaryItem {
 	return items
 }
 
-func owner(full string) string { o, _, _ := strings.Cut(full, "/"); return o }
-func repo(full string) string  { _, r, _ := strings.Cut(full, "/"); return r }
-
 func renderRepoBlock(g repoGroup, items []summaryItem, cont bool) string {
 	var sb strings.Builder
-	header := "📁 " + a("https://github.com/"+g.name, g.name)
+	header := "📁 " + a(g.url, g.name)
 	if cont {
 		header += " (continued)"
 	}

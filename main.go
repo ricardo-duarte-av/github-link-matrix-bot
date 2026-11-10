@@ -23,7 +23,7 @@ var branchRe = regexp.MustCompile(`Recent Commits to [^\s:]+:([^\s:]+):`)
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "path to config file")
-	printURL := flag.String("print", "", "fetch a GitHub commit/release URL, print the message that would be sent, and exit")
+	printURL := flag.String("print", "", "fetch a commit/release URL, print the message that would be sent, and exit")
 	debug := flag.Bool("debug", false, "enable debug logging")
 	flag.Parse()
 
@@ -35,7 +35,7 @@ func main() {
 	}
 
 	if *printURL != "" {
-		printPreview(*printURL, os.Getenv("GITHUB_TOKEN"))
+		printPreview(*printURL, *configPath)
 		return
 	}
 
@@ -85,7 +85,11 @@ func main() {
 		rooms = append(rooms, r)
 	}
 
-	gh := &GitHub{Token: cfg.GitHubToken, Client: &http.Client{Timeout: 20 * time.Second}}
+	forges, _ := NewForges(cfg.GitHubToken, cfg.Forges) // validated by loadConfig
+	for _, f := range forges {
+		log.Info().Str("url", f.BaseURL).Str("type", f.Kind).Bool("token", f.Token != "").Msg("Watching links to forge")
+	}
+	gh := &Fetcher{Client: &http.Client{Timeout: 20 * time.Second}, Forges: forges}
 	startTime := time.Now()
 
 	var sum *Summary
@@ -147,15 +151,15 @@ func main() {
 }
 
 const (
-	// A release or commit can 404 when the RSS feed is ahead of GitHub (e.g. a
+	// A release or commit can 404 when the RSS feed is ahead of the forge's API (e.g. a
 	// release that is still a draft). Keep retrying for a while before giving up.
 	// Rate-limited fetches are retried within the same window, once the limit resets.
 	notFoundRetryInterval = 5 * time.Minute
 	retryFor              = 24 * time.Hour
 )
 
-func handleMessage(ctx context.Context, client *mautrix.Client, gh *GitHub, sum *Summary, evt *event.Event, msg *event.MessageEventContent) {
-	links := findLinks(msg.Body, msg.FormattedBody)
+func handleMessage(ctx context.Context, client *mautrix.Client, gh *Fetcher, sum *Summary, evt *event.Event, msg *event.MessageEventContent) {
+	links := findLinks(gh.Forges, msg.Body, msg.FormattedBody)
 	if len(links) == 0 {
 		return
 	}
@@ -173,7 +177,7 @@ func handleMessage(ctx context.Context, client *mautrix.Client, gh *GitHub, sum 
 			go retryLater(ctx, client, gh, sum, evt.RoomID, l, branch, wait, log)
 			continue
 		} else if err != nil {
-			log.Error().Err(err).Str("url", l.URL).Msg("Failed to fetch from GitHub")
+			log.Error().Err(err).Str("url", l.URL).Msg("Failed to fetch link info")
 			continue
 		}
 		postContent(ctx, client, evt.RoomID, l, content, log)
@@ -196,15 +200,15 @@ func retryDelay(err error) (time.Duration, bool) {
 func logRetry(log zerolog.Logger, err error, l Link, attempt int, wait time.Duration) {
 	ev := log.Warn().Str("url", l.URL).Int("attempt", attempt).Dur("retry_in", wait)
 	if isNotFound(err) {
-		ev.Msg("Not found on GitHub yet, will retry")
+		ev.Msg("Not found yet, will retry")
 	} else if _, ok := rateLimitWait(err); ok {
-		ev.Msg("GitHub rate limit exceeded, will retry after it resets")
+		ev.Msg("API rate limit exceeded, will retry after it resets")
 	} else {
-		ev.Err(err).Msg("Failed to fetch from GitHub, will retry")
+		ev.Err(err).Msg("Failed to fetch link info, will retry")
 	}
 }
 
-func retryLater(ctx context.Context, client *mautrix.Client, gh *GitHub, sum *Summary, roomID id.RoomID, l Link, branch string, wait time.Duration, log zerolog.Logger) {
+func retryLater(ctx context.Context, client *mautrix.Client, gh *Fetcher, sum *Summary, roomID id.RoomID, l Link, branch string, wait time.Duration, log zerolog.Logger) {
 	deadline := time.Now().Add(retryFor)
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
@@ -221,7 +225,7 @@ func retryLater(ctx context.Context, client *mautrix.Client, gh *GitHub, sum *Su
 			return
 		}
 		if time.Now().After(deadline) {
-			log.Error().Err(err).Str("url", l.URL).Int("attempt", attempt).Msg("Still failing to fetch from GitHub, giving up")
+			log.Error().Err(err).Str("url", l.URL).Int("attempt", attempt).Msg("Still failing to fetch link info, giving up")
 			return
 		}
 		// Other transient errors (network, 5xx) don't end the retry loop either.
@@ -241,14 +245,23 @@ func postContent(ctx context.Context, client *mautrix.Client, roomID id.RoomID, 
 		log.Error().Err(err).Str("url", l.URL).Msg("Failed to send message")
 		return
 	}
-	log.Info().Str("url", l.URL).Msg("Posted GitHub info")
+	log.Info().Str("url", l.URL).Msg("Posted link info")
 }
 
-func printPreview(u, token string) {
-	gh := &GitHub{Token: token, Client: &http.Client{Timeout: 20 * time.Second}}
-	links := findLinks(u)
+// printPreview uses the forges from the config file if it loads, else the
+// built-in ones with $GITHUB_TOKEN.
+func printPreview(u, configPath string) {
+	var forges []*Forge
+	if cfg, err := loadConfig(configPath); err == nil {
+		forges, _ = NewForges(cfg.GitHubToken, cfg.Forges)
+	} else {
+		fmt.Fprintf(os.Stderr, "not using %s (%v); only built-in forges are known\n", configPath, err)
+		forges, _ = NewForges(os.Getenv("GITHUB_TOKEN"), nil)
+	}
+	gh := &Fetcher{Client: &http.Client{Timeout: 20 * time.Second}, Forges: forges}
+	links := findLinks(forges, u)
 	if len(links) == 0 {
-		fmt.Fprintln(os.Stderr, "no GitHub commit/release link found")
+		fmt.Fprintln(os.Stderr, "no commit/release link to a known forge found")
 		os.Exit(1)
 	}
 	branch := ""

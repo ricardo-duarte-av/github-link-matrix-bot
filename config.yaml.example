@@ -19,6 +19,16 @@ rooms:
 # API allows 60 requests/hour.
 github_token: ""
 
+# Other forges to watch links to. github.com, gitlab.com and codeberg.org are
+# built in; list them here only to add a token. type is one of forgejo, gitea,
+# gitlab or github (GitHub Enterprise). Links to hosts not listed are ignored.
+forges:
+  - url: https://git.eden-emu.dev
+    type: forgejo
+    # Optional API token (Forgejo/Gitea: an access token; GitLab: a personal
+    # access token with read_api).
+    token: ""
+
 # Optional daily summary: each room gets one digest per day listing the commits
 # and releases the bot posted about, grouped by repo. Long digests are split
 # into several messages to stay under Matrix's 64 KiB event size limit.
