@@ -21,9 +21,18 @@ there are listed with their status only.
   next one. Digests over ~48 KB are split into several messages (Matrix
   events are capped at 64 KiB).
 
+- Threads (optional): instead of posting into the main timeline, the info goes
+  into one thread per repo per room, as a reply to the message with the link,
+  and that message gets a 🧵 reaction. The bot starts each thread with a short
+  "🧵 owner/repo — commits & releases" message the first time it sees the repo.
+  Thread roots are kept in `state_file`, so restarts reuse the same threads; if a
+  root is redacted, a new thread is started. See `threads:` in
+  `config.yaml.example`.
+
 Only new messages are handled; history present at startup is ignored.
 Both `m.text` and `m.notice` messages are processed, and the info is posted as a
-standalone `m.notice` (not a reply) so other bots won't loop on it. E2EE rooms
+standalone `m.notice` (or a thread reply, with threads on) that mentions nobody,
+and the bot ignores its own messages. E2EE rooms
 aren't supported.
 
 ## Setup
@@ -60,6 +69,6 @@ cp .token data/.token
 docker compose up -d
 ```
 
-`./data` is mounted read-only at `/data`; the daily summary log goes in the
-writable `state` named volume at `/state`. The container runs as uid 65532, so
+`./data` is mounted read-only at `/data`; the daily summary log and thread
+roots go in the writable `state` named volume at `/state`. The container runs as uid 65532, so
 the files must be readable by it (or set `user:` in `docker-compose.yaml`).

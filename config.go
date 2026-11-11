@@ -18,6 +18,13 @@ type Config struct {
 	GitHubToken     string        `yaml:"github_token"`
 	Forges          []ForgeConfig `yaml:"forges"`
 	Summary         SummaryConfig `yaml:"summary"`
+	Threads         ThreadsConfig `yaml:"threads"`
+}
+
+// ThreadsConfig puts link info in one thread per repo per room.
+type ThreadsConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	StateFile string `yaml:"state_file"` // empty: in memory only
 }
 
 // ForgeConfig adds a Forgejo/Gitea, GitLab or GitHub Enterprise instance.
@@ -78,6 +85,9 @@ func loadConfig(path string) (*Config, error) {
 	}
 	if p := cfg.Summary.StateFile; p != "" && !filepath.IsAbs(p) {
 		cfg.Summary.StateFile = filepath.Join(filepath.Dir(path), p)
+	}
+	if p := cfg.Threads.StateFile; p != "" && !filepath.IsAbs(p) {
+		cfg.Threads.StateFile = filepath.Join(filepath.Dir(path), p)
 	}
 	if len(cfg.Rooms) == 0 {
 		return nil, errors.New("at least one room is required")

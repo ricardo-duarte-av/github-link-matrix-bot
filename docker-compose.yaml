@@ -12,7 +12,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./data:/data:ro
-      # Writable state (daily summary log). The named volume is created owned by
+      # Writable state (daily summary log, thread roots). The named volume is created owned by
       # uid 65532; if you change `user:` below, use a bind mount you own instead.
       - state:/state
     # The image runs as uid/gid 65532. config.yaml and .token must be readable

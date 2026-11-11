@@ -101,6 +101,14 @@ func main() {
 		go sum.Run(ctx, client)
 	}
 
+	var threads *Threads
+	if cfg.Threads.Enabled {
+		threads, err = NewThreads(cfg.Threads, log)
+		if err != nil {
+			log.Fatal().Err(err).Msg("Failed to set up threads")
+		}
+	}
+
 	syncer := client.Syncer.(*mautrix.DefaultSyncer)
 	syncer.FilterJSON = &mautrix.Filter{
 		Room: &mautrix.RoomFilter{
@@ -127,7 +135,7 @@ func main() {
 		if content.RelatesTo.GetReplaceID() != "" {
 			return // ignore edits
 		}
-		handleMessage(ctx, client, gh, sum, evt, content)
+		handleMessage(ctx, client, gh, sum, threads, evt, content)
 	})
 
 	go func() {
@@ -158,7 +166,7 @@ const (
 	retryFor              = 24 * time.Hour
 )
 
-func handleMessage(ctx context.Context, client *mautrix.Client, gh *Fetcher, sum *Summary, evt *event.Event, msg *event.MessageEventContent) {
+func handleMessage(ctx context.Context, client *mautrix.Client, gh *Fetcher, sum *Summary, threads *Threads, evt *event.Event, msg *event.MessageEventContent) {
 	links := findLinks(gh.Forges, msg.Body, msg.FormattedBody)
 	if len(links) == 0 {
 		return
@@ -174,13 +182,13 @@ func handleMessage(ctx context.Context, client *mautrix.Client, gh *Fetcher, sum
 		content, entry, err := gh.Fetch(ctx, l, branch)
 		if wait, ok := retryDelay(err); ok {
 			logRetry(log, err, l, 1, wait)
-			go retryLater(ctx, client, gh, sum, evt.RoomID, l, branch, wait, log)
+			go retryLater(ctx, client, gh, sum, threads, evt.RoomID, evt.ID, l, branch, wait, log)
 			continue
 		} else if err != nil {
 			log.Error().Err(err).Str("url", l.URL).Msg("Failed to fetch link info")
 			continue
 		}
-		postContent(ctx, client, evt.RoomID, l, content, log)
+		postContent(ctx, client, threads, evt.RoomID, evt.ID, l, *entry, content, log)
 		sum.Add(evt.RoomID, *entry)
 	}
 }
@@ -208,7 +216,7 @@ func logRetry(log zerolog.Logger, err error, l Link, attempt int, wait time.Dura
 	}
 }
 
-func retryLater(ctx context.Context, client *mautrix.Client, gh *Fetcher, sum *Summary, roomID id.RoomID, l Link, branch string, wait time.Duration, log zerolog.Logger) {
+func retryLater(ctx context.Context, client *mautrix.Client, gh *Fetcher, sum *Summary, threads *Threads, roomID id.RoomID, replyTo id.EventID, l Link, branch string, wait time.Duration, log zerolog.Logger) {
 	deadline := time.Now().Add(retryFor)
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
@@ -220,7 +228,7 @@ func retryLater(ctx context.Context, client *mautrix.Client, gh *Fetcher, sum *S
 		}
 		content, entry, err := gh.Fetch(ctx, l, branch)
 		if err == nil {
-			postContent(ctx, client, roomID, l, content, log)
+			postContent(ctx, client, threads, roomID, replyTo, l, *entry, content, log)
 			sum.Add(roomID, *entry)
 			return
 		}
@@ -238,10 +246,17 @@ func retryLater(ctx context.Context, client *mautrix.Client, gh *Fetcher, sum *S
 	}
 }
 
-func postContent(ctx context.Context, client *mautrix.Client, roomID id.RoomID, l Link, content *event.MessageEventContent, log zerolog.Logger) {
-	// Post as a standalone message (not a reply) that pings nobody.
+// postContent posts link info that pings nobody: into the repo's thread as a reply
+// to the triggering message when threads are enabled, else as a standalone message.
+func postContent(ctx context.Context, client *mautrix.Client, threads *Threads, roomID id.RoomID, replyTo id.EventID, l Link, entry Entry, content *event.MessageEventContent, log zerolog.Logger) {
 	content.Mentions = &event.Mentions{}
-	if _, err := client.SendMessageEvent(ctx, roomID, event.EventMessage, content); err != nil {
+	var err error
+	if threads != nil {
+		err = threads.Send(ctx, client, roomID, replyTo, entry, content)
+	} else {
+		_, err = client.SendMessageEvent(ctx, roomID, event.EventMessage, content)
+	}
+	if err != nil {
 		log.Error().Err(err).Str("url", l.URL).Msg("Failed to send message")
 		return
 	}

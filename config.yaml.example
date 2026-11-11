@@ -44,3 +44,12 @@ summary:
   state_file: /state/summary.json
   # Commits listed per repo before "… and N more" (-1 for no limit).
   max_commits_per_repo: 50
+
+# Optional threads: post the info into one thread per repo per room (as a reply
+# to the message with the link, which also gets a 🧵 reaction) instead of the
+# main timeline. The bot starts each thread with a short root message.
+threads:
+  enabled: false
+  # Where thread roots are kept so restarts reuse the same threads. Leave
+  # empty to keep them in memory only (new threads after each restart).
+  state_file: /state/threads.json
