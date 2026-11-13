@@ -180,6 +180,12 @@ func (s *Summary) sendAll(ctx context.Context, client *mautrix.Client) {
 		sent := true
 		for i, content := range msgs {
 			content.Mentions = &event.Mentions{}
+			if i == 0 {
+				// Ping the room once per digest. It has to be m.text: the default
+				// .m.rule.suppress_notices push rule wins over .m.rule.is_room_mention.
+				content.MsgType = event.MsgText
+				content.Mentions.Room = true
+			}
 			if _, err := client.SendMessageEvent(ctx, room, event.EventMessage, content); err != nil {
 				// Keep the entries so they're included in the next summary.
 				log.Error().Err(err).Int("part", i+1).Int("parts", len(msgs)).Msg("Failed to send daily summary")

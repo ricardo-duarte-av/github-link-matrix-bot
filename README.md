@@ -19,7 +19,9 @@ there are listed with their status only.
   `config.yaml.example`. The log is persisted to `state_file`, so restarts
   don't lose it; a missed summary (bot down at that time) is folded into the
   next one. Digests over ~48 KB are split into several messages (Matrix
-  events are capped at 64 KiB).
+  events are capped at 64 KiB). The first message tags @room to ping everyone
+  (sent as `m.text`, since notices never notify); the bot needs the room's
+  `notifications.room` power level (default 50) for the ping to go through.
 
 - Threads (optional): instead of posting into the main timeline, the info goes
   into one thread per repo per room, as a reply to the message with the link,
