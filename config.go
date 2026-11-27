@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+	"maunium.net/go/mautrix/id"
 )
 
 type Config struct {
@@ -15,6 +16,7 @@ type Config struct {
 	AccessToken     string        `yaml:"access_token"`
 	AccessTokenFile string        `yaml:"access_token_file"`
 	Rooms           []string      `yaml:"rooms"`
+	IgnoredUsers    []id.UserID   `yaml:"ignored_users"`
 	GitHubToken     string        `yaml:"github_token"`
 	Forges          []ForgeConfig `yaml:"forges"`
 	Summary         SummaryConfig `yaml:"summary"`
@@ -88,6 +90,11 @@ func loadConfig(path string) (*Config, error) {
 	}
 	if p := cfg.Threads.StateFile; p != "" && !filepath.IsAbs(p) {
 		cfg.Threads.StateFile = filepath.Join(filepath.Dir(path), p)
+	}
+	for _, u := range cfg.IgnoredUsers {
+		if _, _, err := u.Parse(); err != nil {
+			return nil, fmt.Errorf("ignored_users: invalid user ID %q: %w", u, err)
+		}
 	}
 	if len(cfg.Rooms) == 0 {
 		return nil, errors.New("at least one room is required")

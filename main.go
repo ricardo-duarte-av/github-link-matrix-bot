@@ -109,11 +109,16 @@ func main() {
 		}
 	}
 
+	ignored := make(map[id.UserID]bool, len(cfg.IgnoredUsers))
+	for _, u := range cfg.IgnoredUsers {
+		ignored[u] = true
+	}
+
 	syncer := client.Syncer.(*mautrix.DefaultSyncer)
 	syncer.FilterJSON = &mautrix.Filter{
 		Room: &mautrix.RoomFilter{
 			Rooms:    rooms,
-			Timeline: &mautrix.FilterPart{Types: []event.Type{event.EventMessage}},
+			Timeline: &mautrix.FilterPart{Types: []event.Type{event.EventMessage}, NotSenders: cfg.IgnoredUsers},
 		},
 		Presence:    &mautrix.FilterPart{NotTypes: []event.Type{{Type: "*"}}},
 		AccountData: &mautrix.FilterPart{NotTypes: []event.Type{{Type: "*"}}},
@@ -121,7 +126,7 @@ func main() {
 	// Skip the initial sync entirely so messages already in the room are ignored.
 	syncer.OnSync(client.DontProcessOldEvents)
 	syncer.OnEventType(event.EventMessage, func(ctx context.Context, evt *event.Event) {
-		if !monitored[evt.RoomID] || evt.Sender == client.UserID {
+		if !monitored[evt.RoomID] || evt.Sender == client.UserID || ignored[evt.Sender] {
 			return
 		}
 		// Extra guard against old events (e.g. after a gappy sync).

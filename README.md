@@ -34,7 +34,8 @@ there are listed with their status only.
 Only new messages are handled; history present at startup is ignored.
 Both `m.text` and `m.notice` messages are processed, and the info is posted as a
 standalone `m.notice` (or a thread reply, with threads on) that mentions nobody,
-and the bot ignores its own messages. E2EE rooms
+and the bot ignores its own messages, as well as those from any user listed
+under `ignored_users` in the config. E2EE rooms
 aren't supported.
 
 ## Setup

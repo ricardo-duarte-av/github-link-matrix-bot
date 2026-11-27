@@ -15,6 +15,11 @@ access_token_file: .token
 rooms:
   - "!nmZrvcKkeQiFGRlJtE:aguiarvieira.pt"
 
+# Optional Matrix users whose messages are ignored (no link info is posted for
+# their links, and they don't count towards the daily summary). Full user IDs.
+ignored_users: []
+#  - "@somebot:example.org"
+
 # Optional GitHub token (falls back to $GITHUB_TOKEN). Without one, the GitHub
 # API allows 60 requests/hour.
 github_token: ""
